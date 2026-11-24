@@ -1,0 +1,129 @@
+workflows:
+  android-release:
+    name: AL MIHANI Google Play Release
+    max_build_duration: 60
+
+    environment:
+      android_signing:
+        - AL-MIHANI-KEY
+
+      vars:
+        PACKAGE_NAME: "com.almahani.app"
+
+      node: latest
+      java: 21
+
+    scripts:
+      - name: Install dependencies
+        script: |
+          npm init -y
+          npm install @capacitor/core @capacitor/cli @capacitor/android @capacitor/assets sharp
+
+      - name: Configure Capacitor
+        script: |
+          mkdir -p www assets
+
+          cp index.html www/index.html
+          cp al-mihani-app-icon.png www/
+
+          node -e "require('sharp')('al-mihani-app-icon.png').resize(1024,1024,{fit:'contain',background:'#0b1020'}).png().toFile('assets/icon.png')"
+
+          npx cap init "المهني" "$PACKAGE_NAME" --web-dir=www
+
+          npx cap add android
+
+      - name: Generate Al-Mihani Android App Icon
+        script: |
+          npx @capacitor/assets generate --android --iconBackgroundColor '#0b1020'
+
+      - name: Set Android version code
+        script: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path("android/app/build.gradle")
+          s = p.read_text()
+
+          s, count = re.subn(
+              r'\bversionCode\s+\d+',
+              'versionCode 1',
+              s,
+              count=1
+          )
+
+          s, name_count = re.subn(
+              r'versionName\s+"[^"]*"',
+              'versionName "1.0.0"',
+              s,
+              count=1
+          )
+
+          if count != 1:
+              raise SystemExit("Could not find versionCode in build.gradle")
+
+          if name_count != 1:
+              raise SystemExit("Could not find versionName in build.gradle")
+
+          p.write_text(s)
+
+          print("Version code set to 1")
+          print("Version name set to 1.0.0")
+          PY
+
+      - name: Configure release signing
+        script: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path("android/app/build.gradle")
+          s = p.read_text()
+
+          signing = """
+              signingConfigs {
+                  release {
+                      storeFile file(System.getenv("CM_KEYSTORE_PATH"))
+                      storePassword System.getenv("CM_KEYSTORE_PASSWORD")
+                      keyAlias System.getenv("CM_KEY_ALIAS")
+                      keyPassword System.getenv("CM_KEY_PASSWORD")
+                  }
+              }
+          """
+
+          if "signingConfigs {" not in s:
+              match = re.search(r'android\s*\{', s)
+
+              if not match:
+                  raise SystemExit("Android block not found")
+
+              s = s[:match.end()] + "\n" + signing + s[match.end():]
+
+          pattern = r'buildTypes\s*\{\s*release\s*\{'
+          match = re.search(pattern, s)
+
+          if not match:
+              raise SystemExit("Release build type not found")
+
+          if "signingConfig signingConfigs.release" not in s:
+              pos = match.end()
+
+              s = (
+                  s[:pos]
+                  + "\n            signingConfig signingConfigs.release"
+                  + s[pos:]
+              )
+
+          p.write_text(s)
+
+          print("Release signing configured")
+          PY
+
+      - name: Build signed Android App Bundle
+        script: |
+          cd android
+          chmod +x gradlew
+          ./gradlew bundleRelease
+
+    artifacts:
+      - android/app/build/outputs/bundle/release/*.aab
