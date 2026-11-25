@@ -61,9 +61,39 @@ workflows:
           npx cap init "المهني" "$PACKAGE_NAME" --web-dir=www
           npx cap add android
 
+      - name: Remove unnecessary DUMP permission
+        script: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("android/app/src/main/AndroidManifest.xml")
+          text = path.read_text()
+
+          if 'xmlns:tools=' not in text:
+              text = text.replace(
+                  '<manifest ',
+                  '<manifest xmlns:tools="http://schemas.android.com/tools" ',
+                  1
+              )
+
+          permission = '<uses-permission android:name="android.permission.DUMP" tools:node="remove" />'
+
+          if 'android.permission.DUMP' not in text:
+              text = text.replace(
+                  '</manifest>',
+                  f'    {permission}\n</manifest>'
+              )
+
+          path.write_text(text)
+
+          print("DUMP permission removal rule added.")
+          PY
+
       - name: Generate Android assets
         script: |
-          npx @capacitor/assets generate --android --iconBackgroundColor "#0b1020"
+          npx @capacitor/assets generate \
+            --android \
+            --iconBackgroundColor "#0b1020"
 
       - name: Configure Android version and signing
         script: |
@@ -143,7 +173,17 @@ workflows:
               text = text[:release] + release_block + text[end:]
 
           path.write_text(text)
+
+          print("Version code set to 1")
+          print("Version name set to 1.0.0")
+          print("Release signing configured")
           PY
+
+      - name: Verify DUMP permission
+        script: |
+          echo "Checking Android Manifest for DUMP permission..."
+          grep -R "android.permission.DUMP" android/app/src/main/AndroidManifest.xml || true
+          echo "Manifest check completed."
 
       - name: Build Android App Bundle
         script: |
