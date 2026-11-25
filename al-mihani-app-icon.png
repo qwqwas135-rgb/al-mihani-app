@@ -24,17 +24,50 @@ workflows:
           mkdir -p www assets
 
           cp index.html www/index.html
-          cp al-mihani-app-icon.png www/
 
-          node -e "require('sharp')('al-mihani-app-icon.png').resize(1024,1024,{fit:'contain',background:'#0b1020'}).png().toFile('assets/icon.png')"
+          if [ ! -f "al-mihani-icon.png" ]; then
+            echo "ERROR: al-mihani-icon.png not found"
+            exit 1
+          fi
+
+          node -e "
+          const sharp = require('sharp');
+
+          sharp('al-mihani-icon.png')
+            .metadata()
+            .then(info => {
+              console.log('Icon format:', info.format);
+              console.log('Icon size:', info.width + 'x' + info.height);
+
+              if (info.format !== 'png') {
+                throw new Error('al-mihani-icon.png is not a real PNG image');
+              }
+
+              return sharp('al-mihani-icon.png')
+                .resize(1024, 1024, {
+                  fit: 'contain',
+                  background: '#0b1020'
+                })
+                .png()
+                .toFile('assets/icon.png');
+            })
+            .then(() => {
+              console.log('Icon created successfully');
+            })
+            .catch(err => {
+              console.error('ICON ERROR:', err);
+              process.exit(1);
+            });
+          "
 
           npx cap init "المهني" "$PACKAGE_NAME" --web-dir=www
-
           npx cap add android
 
       - name: Generate Al-Mihani Android App Icon
         script: |
-          npx @capacitor/assets generate --android --iconBackgroundColor '#0b1020'
+          npx @capacitor/assets generate \
+            --android \
+            --iconBackgroundColor '#0b1020'
 
       - name: Set Android version code
         script: |
