@@ -1,0 +1,121 @@
+workflows:
+  android-release:
+    name: AL MIHANI Android Release
+    max_build_duration: 60
+
+    environment:
+      android_signing:
+        - AL-MIHANI-KEY
+
+      vars:
+        PACKAGE_NAME: "com.almihani.app"
+
+      node: latest
+      java: 21
+
+    scripts:
+      - name: Prepare web project
+        script: |
+          npm init -y
+          npm install @capacitor/core @capacitor/cli @capacitor/android @capacitor/assets sharp
+
+          mkdir -p www
+          cp index.html www/index.html
+
+          mkdir -p assets
+
+          node -e "
+          const sharp = require('sharp');
+          sharp('al-mihani-app-icon.png')
+            .resize(1024, 1024)
+            .png()
+            .toFile('assets/icon.png')
+            .then(() => console.log('Icon created successfully'))
+            .catch(err => {
+              console.error(err);
+              process.exit(1);
+            });
+          "
+
+      - name: Initialize Capacitor
+        script: |
+          npx cap init "المهني" "$PACKAGE_NAME" --web-dir=www
+          npx cap add android
+
+      - name: Generate Android assets
+        script: |
+          npx @capacitor/assets generate --android --iconBackgroundColor "#0b1020"
+
+      - name: Configure Android version
+        script: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path("android/app/build.gradle")
+          text = path.read_text()
+
+          text = re.sub(
+              r'versionCode\s+\d+',
+              'versionCode 1',
+              text,
+              count=1
+          )
+
+          text = re.sub(
+              r'versionName\s+[\'"][^\'"]+[\'"]',
+              'versionName "1.0.0"',
+              text,
+              count=1
+          )
+
+          path.write_text(text)
+          PY
+
+      - name: Configure release signing
+        script: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("android/app/build.gradle")
+          text = path.read_text()
+
+          signing_block = """
+              signingConfigs {
+                  release {
+                      storeFile file(System.getenv("CM_KEYSTORE_PATH"))
+                      storePassword System.getenv("CM_KEYSTORE_PASSWORD")
+                      keyAlias System.getenv("CM_KEY_ALIAS")
+                      keyPassword System.getenv("CM_KEY_PASSWORD")
+                  }
+              }
+          """
+
+          if "signingConfigs {" not in text:
+              text = text.replace(
+                  "android {",
+                  "android {" + signing_block,
+                  1
+              )
+
+          text = text.replace(
+              "buildTypes {",
+              """buildTypes {
+                  release {
+                      signingConfig signingConfigs.release
+                  }
+              """,
+              1
+          )
+
+          path.write_text(text)
+          PY
+
+      - name: Build Android App Bundle
+        script: |
+          cd android
+          chmod +x gradlew
+          ./gradlew bundleRelease
+
+    artifacts:
+      - android/app/build/outputs/bundle/release/*.aab
