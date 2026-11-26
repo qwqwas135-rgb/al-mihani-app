@@ -79,9 +79,13 @@ workflows:
           text = path.read_text()
 
           # رقم الإصدار = رقم البناء + 10، حتى ما يتعارض مع الإصدارات القديمة
+          import os
+          build_no = int(os.environ.get("BUILD_NUMBER", "1") or "1")
+          version_code = build_no + 10
+
           text = re.sub(
               r'versionCode\s+\d+',
-              'versionCode ((System.getenv("BUILD_NUMBER") ?: "1") as int) + 10',
+              f'versionCode {version_code}',
               text,
               count=1
           )
@@ -149,7 +153,7 @@ workflows:
 
           path.write_text(text)
 
-          print("Version code set from BUILD_NUMBER + 10")
+          print(f"Version code set to {version_code}")
           print("Version name set to 1.0.0")
           print("Release signing configured")
           PY
