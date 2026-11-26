@@ -1,0 +1,164 @@
+workflows:
+  android-release:
+    name: AL MIHANI Android Release
+    max_build_duration: 60
+
+    environment:
+      android_signing:
+        - AL-MIHANI-KEY
+
+      vars:
+        PACKAGE_NAME: "com.almihani.app"
+
+      node: latest
+      java: 21
+
+    scripts:
+      - name: Prepare web project
+        script: |
+          npm init -y
+          npm install @capacitor/core @capacitor/cli @capacitor/android @capacitor/assets sharp
+
+          mkdir -p www
+          cp index.html manifest.json sw.js www/
+          cp icon-192.png icon-512.png www/
+          cp -R privacy-policy www/
+
+          mkdir -p assets
+
+          if [ ! -f "al-mihani-icon.png" ]; then
+            echo "ERROR: al-mihani-icon.png not found"
+            exit 1
+          fi
+
+          node -e "
+          const sharp = require('sharp');
+
+          sharp('al-mihani-icon.png')
+            .metadata()
+            .then(info => {
+              console.log('Icon format:', info.format);
+              console.log('Icon size:', info.width, 'x', info.height);
+
+              if (info.format !== 'png') {
+                throw new Error('Icon is not a real PNG file');
+              }
+
+              return sharp('al-mihani-icon.png')
+                .resize(1024, 1024)
+                .png()
+                .toFile('assets/icon.png');
+            })
+            .then(() => {
+              console.log('Icon created successfully');
+            })
+            .catch(err => {
+              console.error('ICON ERROR:', err);
+              process.exit(1);
+            });
+          "
+
+      - name: Initialize Capacitor
+        script: |
+          npx cap init "المهني" "$PACKAGE_NAME" --web-dir=www
+          npx cap add android
+
+      - name: Generate Android assets
+        script: |
+          npx @capacitor/assets generate \
+            --android \
+            --iconBackgroundColor "#0b1020"
+
+      - name: Configure Android version and signing
+        script: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path("android/app/build.gradle")
+          text = path.read_text()
+
+          # رقم الإصدار = رقم البناء + 10، حتى ما يتعارض مع الإصدارات القديمة
+          text = re.sub(
+              r'versionCode\s+\d+',
+              'versionCode ((System.getenv("BUILD_NUMBER") ?: "1") as int) + 10',
+              text,
+              count=1
+          )
+
+          text = re.sub(
+              r'versionName\s+[\'"][^\'"]+[\'"]',
+              'versionName "1.0.0"',
+              text,
+              count=1
+          )
+
+          if "signingConfigs {" not in text:
+              signing_block = """
+              signingConfigs {
+                  release {
+                      storeFile file(System.getenv("CM_KEYSTORE_PATH"))
+                      storePassword System.getenv("CM_KEYSTORE_PASSWORD")
+                      keyAlias System.getenv("CM_KEY_ALIAS")
+                      keyPassword System.getenv("CM_KEY_PASSWORD")
+                  }
+              }
+              """
+
+              text = text.replace(
+                  "    buildTypes {",
+                  signing_block + "\n    buildTypes {",
+                  1
+              )
+
+          build_types = text.find("buildTypes {")
+
+          if build_types == -1:
+              raise SystemExit("buildTypes block not found")
+
+          release = text.find("release {", build_types)
+
+          if release == -1:
+              raise SystemExit("release buildType not found")
+
+          opening = text.find("{", release)
+          depth = 0
+          end = None
+
+          for i in range(opening, len(text)):
+              if text[i] == "{":
+                  depth += 1
+              elif text[i] == "}":
+                  depth -= 1
+                  if depth == 0:
+                      end = i + 1
+                      break
+
+          if end is None:
+              raise SystemExit("Could not parse release block")
+
+          release_block = text[release:end]
+
+          if "signingConfig signingConfigs.release" not in release_block:
+              release_block = (
+                  release_block[:-1]
+                  + "\n            signingConfig signingConfigs.release\n        }"
+              )
+
+              text = text[:release] + release_block + text[end:]
+
+          path.write_text(text)
+
+          print("Version code set from BUILD_NUMBER + 10")
+          print("Version name set to 1.0.0")
+          print("Release signing configured")
+          PY
+
+      - name: Build Android App Bundle
+        script: |
+          cd android
+          chmod +x gradlew
+          ./gradlew bundleRelease
+
+    artifacts:
+      - android/app/build/outputs/bundle/release/*.aab
